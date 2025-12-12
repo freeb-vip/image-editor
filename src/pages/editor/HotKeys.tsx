@@ -36,13 +36,7 @@ function HotKeys(props: IProps) {
         editor.setSelectedElementIds(elems.map(d => d.id));
         editor.store.emitControl(elems.map(d => d.id));
       } else {
-        // 如果没有登录，需要先登录
-        if (!user.info) {
-          // pubsub.publish('showLoginModal');
-          Toast.error('请先登录');
-          return;
-        }
-
+        // 允许未登录用户上传图片，但会提示无法保存到云端
         const clipdata = event.clipboardData || (window as any).clipboardData;
         // console.log('clipdata', clipdata, item.getAsFile());
         const item = clipdata.items[0];
@@ -55,41 +49,70 @@ function HotKeys(props: IProps) {
 
         // 只取剪切板中最新的
         if ((item && item.kind == 'file' && item.type.match(/^image\//i)) || svgFile) {
-          const tid = Toast.info('文件上传中...');
-          // 文件上传
-          const [res, err] = await server.formUpdate({
-            files: svgFile ? [svgFile] : [item.getAsFile()],
-            filename: `${util.createID()}.${svgFile ? 'svg' : 'png'}`,
-            file_type: 'image', // file-普通文件 image-图片文件 audio-音频文件 video-视频文件
-            app_id: editor.appid,
-          });
-          Toast.close(tid);
+          const tid = Toast.info('文件处理中...');
+          
+          try {
+            let imageUrl: string;
+            let imgWidth: number;
+            let imgHeight: number;
 
-          // // 保存到素材库
-          // const [item, err] = await server.createUserMaterial({
-          //   app_id: editor.appid,
-          //   name: name,
-          //   urls: { url, thumb },
-          //   attrs,
-          // });
+            // 如果已登录，上传到服务器
+            if (user.info) {
+              const [res, err] = await server.formUpdate({
+                files: svgFile ? [svgFile] : [item.getAsFile()],
+                filename: `${util.createID()}.${svgFile ? 'svg' : 'png'}`,
+                file_type: 'image',
+                app_id: editor.appid,
+              });
+              
+              if (err) {
+                Toast.close(tid);
+                Toast.error('上传失败：' + err);
+                return;
+              }
 
-          const _img = await util.imgLazy(res.url);
-          const imgLayer = await addImageItem({
-            urls: { url: res.storage_path },
-            attrs: {
-              naturalWidth: _img.naturalWidth,
-              naturalHeight: _img.naturalHeight,
-            },
-          });
-          editor.setSelectedElementIds([imgLayer.id]);
-          editor.store.emitControl([imgLayer.id]);
+              const _img = await util.imgLazy(res.url);
+              imageUrl = res.storage_path;
+              imgWidth = _img.naturalWidth;
+              imgHeight = _img.naturalHeight;
+            } else {
+              // 未登录时，使用本地 Blob URL
+              const file = svgFile || item.getAsFile();
+              imageUrl = URL.createObjectURL(file);
+              
+              // 获取图片尺寸
+              const _img = await util.imgLazy(imageUrl);
+              imgWidth = _img.naturalWidth;
+              imgHeight = _img.naturalHeight;
+              
+              Toast.info('未登录状态，图片仅保存在本地，刷新页面后将丢失');
+            }
 
-          Notification.open({
-            title: '文件上传成功！',
-            content: '支持SVG,JPEG,PNG,GIF的图片格式',
-            duration: 3,
-            position: 'bottomRight',
-          });
+            Toast.close(tid);
+
+            // 添加图片到画布
+            const imgLayer = await addImageItem({
+              urls: { url: imageUrl },
+              attrs: {
+                naturalWidth: imgWidth,
+                naturalHeight: imgHeight,
+              },
+            });
+            editor.setSelectedElementIds([imgLayer.id]);
+            editor.store.emitControl([imgLayer.id]);
+
+            Notification.open({
+              title: '图片添加成功！',
+              content: user.info 
+                ? '支持SVG,JPEG,PNG,GIF的图片格式' 
+                : '未登录模式，图片仅本地可用，无法保存到云端',
+              duration: 3,
+              position: 'bottomRight',
+            });
+          } catch (error) {
+            Toast.close(tid);
+            Toast.error('处理图片失败：' + error.message);
+          }
           return;
         }
       }

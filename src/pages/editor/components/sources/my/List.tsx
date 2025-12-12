@@ -188,7 +188,7 @@ export default function List(props: IProps) {
           {props.type === 'local' ? (
             <Upload
               accept=".gif, .png, .jpeg, .jpg, .svg"
-              action={'/api/v1/common/upload/form'}
+              action={user.info ? '/api/v1/common/upload/form' : ''}
               uploadTrigger="auto"
               headers={{
                 Authorization: user.getToken(),
@@ -204,12 +204,9 @@ export default function List(props: IProps) {
                 console.log('>>>>', v);
               }}
               beforeUpload={async v => {
+                // 允许未登录用户上传，但仅本地使用
                 if (!user.info) {
-                  Toast.warning('请先登录');
-                  return {
-                    shouldUpload: false,
-                    status: 'error',
-                  };
+                  Toast.info('未登录状态，图片仅保存在本地，无法同步到云端');
                 }
 
                 const ftype = v.file.fileInstance.type.split('/')[0];
@@ -246,6 +243,24 @@ export default function List(props: IProps) {
                   progress: 0,
                 });
                 forceUpdate();
+                
+                // 如果未登录，不上传到服务器，直接使用本地文件
+                if (!user.info) {
+                  // 模拟上传成功，直接触发 onSuccess
+                  setTimeout(() => {
+                    if (uploadRef.current && uploadRef.current.insert) {
+                      uploadRef.current.insert(v.file, {
+                        code: 0,
+                        data: { storage_path: v.file.url },
+                      });
+                    }
+                  }, 500);
+                  return {
+                    shouldUpload: false,
+                    status: 'success',
+                  };
+                }
+                
                 return {
                   shouldUpload: true,
                   status: 'success',
@@ -257,6 +272,46 @@ export default function List(props: IProps) {
                 forceUpdate();
               }}
               onSuccess={async (res, file, all) => {
+                // 未登录时，使用本地文件
+                if (!user.info) {
+                  cacheInfoData.current[file.name].status = 'decoding';
+                  forceUpdate();
+
+                  // 等待文件信息处理完成
+                  while (!cacheInfoData.current[file.name].fileInfoSuccess) {
+                    console.log('等待文件处理');
+                    await util.sleep(100);
+                  }
+
+                  const { name, thumb, progress, id, status, ...other } = cacheInfoData.current[file.name];
+                  const attrs = {};
+                  for (let key in other) {
+                    if (key.split('')[0] !== '_') {
+                      attrs[key] = other[key];
+                    }
+                  }
+                  
+                  // 创建本地素材项
+                  const item = {
+                    id: id,
+                    name: name,
+                    type: cacheInfoData.current[file.name].type,
+                    urls: { url: thumb, thumb },
+                    attrs,
+                    local: true, // 标记为本地素材
+                  };
+
+                  cacheInfoData.current[file.name].status = 'uploaded';
+                  forceUpdate();
+                  
+                  if (props.type === 'local') {
+                    items.unshift(item);
+                    setItems([...items]);
+                  }
+                  return;
+                }
+
+                // 已登录用户的原有逻辑
                 if (res.code !== 0) {
                   Toast.error(res.message);
                   cacheInfoData.current[file.name].status = 'uploaded';
