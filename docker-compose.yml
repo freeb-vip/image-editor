@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  image-editor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: image-editor
+    ports:
+      - "3000:80"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+    networks:
+      - image-editor-network
+
+networks:
+  image-editor-network:
+    driver: bridge
